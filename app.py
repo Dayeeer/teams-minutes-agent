@@ -33,6 +33,9 @@ if "meeting_title_saved" not in st.session_state:
 if "mode_saved" not in st.session_state:
     st.session_state.mode_saved = ""
 
+if "output_language_saved" not in st.session_state:
+    st.session_state.output_language_saved = "English"
+
 
 def check_password() -> bool:
     st.sidebar.title("Access")
@@ -85,6 +88,10 @@ with st.sidebar:
         ["Standard Minutes", "Action Items Only", "Executive Summary"],
     )
 
+    output_language = st.selectbox(
+        "Output language", ["English", "Italian", "German", "Russian"]
+    )
+
     create_email = st.checkbox("Prepare email draft if needed", value=True)
 
     st.divider()
@@ -95,6 +102,7 @@ with st.sidebar:
         st.session_state.text_output = None
         st.session_state.meeting_title_saved = ""
         st.session_state.mode_saved = ""
+        st.session_state.output_language_saved = "English"
         st.rerun()
 
     st.divider()
@@ -105,6 +113,7 @@ with st.sidebar:
 meeting_title = st.text_input(
     "Meeting title", value="NRGeer / GICA AI Meeting Assistant"
 )
+
 
 st.subheader("Transcript input")
 
@@ -146,7 +155,7 @@ if generate:
         st.stop()
 
     if not transcript.strip():
-        st.error("Please paste a transcript.")
+        st.error("Please paste or upload a transcript.")
         st.stop()
 
     with st.spinner("Processing transcript with AI..."):
@@ -155,15 +164,16 @@ if generate:
                 transcript=transcript,
                 meeting_title=meeting_title,
                 mode=mode,
+                output_language=output_language,
                 special_instructions=special_instructions,
             )
         except Exception as e:
             st.error(f"Processing failed:\n\n{e}")
             st.stop()
 
-    html_output = render_minutes_html(result, meeting_title, mode)
+    html_output = render_minutes_html(result, meeting_title, mode, output_language)
 
-    text_output = render_plain_text(result, meeting_title)
+    text_output = render_plain_text(result, meeting_title, output_language)
 
     # Save generated output so download buttons do not reset the page
     st.session_state.result = result
@@ -171,6 +181,7 @@ if generate:
     st.session_state.text_output = text_output
     st.session_state.meeting_title_saved = meeting_title
     st.session_state.mode_saved = mode
+    st.session_state.output_language_saved = output_language
 
     st.success("Minutes generated successfully.")
 
@@ -182,6 +193,7 @@ if st.session_state.result is not None:
     text_output = st.session_state.text_output
     saved_meeting_title = st.session_state.meeting_title_saved
     saved_mode = st.session_state.mode_saved
+    saved_output_language = st.session_state.output_language_saved
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     safe_title = make_safe_filename(saved_meeting_title)

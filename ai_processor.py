@@ -94,7 +94,11 @@ MEETING_MINUTES_SCHEMA = {
 
 
 def build_prompt(
-    transcript: str, meeting_title: str, mode: str, special_instructions: str = ""
+    transcript: str,
+    meeting_title: str,
+    mode: str,
+    output_language: str,
+    special_instructions: str = "",
 ) -> str:
 
     special_instructions_block = ""
@@ -115,6 +119,11 @@ Meeting title:
 
 Processing mode:
 {mode}
+
+Output language:
+{output_language}
+
+All generated meeting minutes, decisions, action items, risks, and email drafts must be written in this output language.
 
 {special_instructions_block}
 
@@ -153,7 +162,11 @@ Transcript:
 
 
 def process_transcript(
-    transcript: str, meeting_title: str, mode: str, special_instructions: str = ""
+    transcript: str,
+    meeting_title: str,
+    mode: str,
+    output_language: str,
+    special_instructions: str = "",
 ) -> Dict[str, Any]:
 
     if not transcript.strip():
@@ -163,6 +176,7 @@ def process_transcript(
         transcript=transcript,
         meeting_title=meeting_title,
         mode=mode,
+        output_language=output_language,
         special_instructions=special_instructions,
     )
 
