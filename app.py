@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from ai_processor import process_transcript
 from templates import render_minutes_html, render_plain_text
+from transcript_cleaner import clean_transcript, estimate_transcript_stats
 
 load_dotenv()
 
@@ -94,6 +95,12 @@ with st.sidebar:
 
     create_email = st.checkbox("Prepare email draft if needed", value=True)
 
+    clean_before_processing = st.checkbox(
+        "Clean transcript before processing", value=True
+    )
+
+    show_cleaned_preview = st.checkbox("Show cleaned transcript preview", value=False)
+
     st.divider()
 
     if st.button("Clear current result"):
@@ -113,7 +120,6 @@ with st.sidebar:
 meeting_title = st.text_input(
     "Meeting title", value="NRGeer / GICA AI Meeting Assistant"
 )
-
 
 st.subheader("Transcript input")
 
@@ -137,6 +143,24 @@ elif input_method == "Upload transcript file":
 
 transcript = st.text_area("Transcript text", value=transcript_default, height=350)
 
+cleaned_transcript = clean_transcript(transcript)
+
+if clean_before_processing:
+    transcript_for_ai = cleaned_transcript
+else:
+    transcript_for_ai = transcript
+
+stats = estimate_transcript_stats(transcript, cleaned_transcript)
+
+st.caption(
+    f"Transcript length: {stats['raw_chars']} characters | "
+    f"Cleaned: {stats['cleaned_chars']} characters | "
+    f"Reduction: {stats['reduction_percent']}%"
+)
+
+if show_cleaned_preview:
+    st.text_area("Cleaned transcript preview", value=cleaned_transcript, height=250)
+
 special_instructions = st.text_area(
     "Special instructions for this meeting",
     placeholder=(
@@ -154,14 +178,14 @@ if generate:
         st.error("Please enter a meeting title.")
         st.stop()
 
-    if not transcript.strip():
-        st.error("Please paste or upload a transcript.")
+    if not transcript_for_ai.strip():
+        st.error("Please paste or upload a valid transcript.")
         st.stop()
 
     with st.spinner("Processing transcript with AI..."):
         try:
             result = process_transcript(
-                transcript=transcript,
+                transcript=transcript_for_ai,
                 meeting_title=meeting_title,
                 mode=mode,
                 output_language=output_language,
