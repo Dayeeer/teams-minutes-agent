@@ -1,0 +1,9 @@
+Marco: Today we need to decide how to manage the AI meeting assistant project.
+
+Dasha: I suggest we build a simple MVP that processes Teams transcripts after the meeting.
+
+Marco: Good. The system should create structured minutes, identify decisions, action items and follow-up topics.
+
+Dasha: The first version can use OpenAI API and later connect to Microsoft OneNote and Outlook.
+
+Marco: Decision confirmed. Dasha will create the MVP. Emails should be created as drafts only, not sent automatically.
