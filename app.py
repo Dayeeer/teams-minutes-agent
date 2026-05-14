@@ -106,15 +106,35 @@ meeting_title = st.text_input(
     "Meeting title", value="NRGeer / GICA AI Meeting Assistant"
 )
 
-use_sample = st.checkbox("Use sample transcript", value=True)
+st.subheader("Transcript input")
 
-if use_sample:
+input_method = st.radio(
+    "Choose transcript input method",
+    ["Use sample transcript", "Paste transcript manually", "Upload transcript file"],
+)
+
+transcript_default = ""
+
+if input_method == "Use sample transcript":
     transcript_default = load_sample_transcript()
-else:
-    transcript_default = ""
 
-transcript = st.text_area(
-    "Paste Teams transcript here", value=transcript_default, height=350
+elif input_method == "Upload transcript file":
+    uploaded_file = st.file_uploader(
+        "Upload Teams transcript file", type=["txt", "vtt"]
+    )
+
+    if uploaded_file is not None:
+        transcript_default = uploaded_file.read().decode("utf-8", errors="ignore")
+
+transcript = st.text_area("Transcript text", value=transcript_default, height=350)
+
+special_instructions = st.text_area(
+    "Special instructions for this meeting",
+    placeholder=(
+        "Example: Focus mainly on action items for Marco and Dasha. "
+        "Create a short follow-up email only if there are urgent decisions."
+    ),
+    height=120,
 )
 
 generate = st.button("Generate minutes", type="primary")
@@ -132,7 +152,10 @@ if generate:
     with st.spinner("Processing transcript with AI..."):
         try:
             result = process_transcript(
-                transcript=transcript, meeting_title=meeting_title, mode=mode
+                transcript=transcript,
+                meeting_title=meeting_title,
+                mode=mode,
+                special_instructions=special_instructions,
             )
         except Exception as e:
             st.error(f"Processing failed:\n\n{e}")

@@ -93,7 +93,19 @@ MEETING_MINUTES_SCHEMA = {
 }
 
 
-def build_prompt(transcript: str, meeting_title: str, mode: str) -> str:
+def build_prompt(
+    transcript: str, meeting_title: str, mode: str, special_instructions: str = ""
+) -> str:
+
+    special_instructions_block = ""
+
+    if special_instructions.strip():
+        special_instructions_block = f"""
+Special instructions for this meeting:
+{special_instructions}
+
+These instructions are important, but you must still follow the transcript strictly and must not invent facts.
+"""
 
     return f"""
 You are an expert executive assistant creating professional meeting minutes from a Microsoft Teams transcript.
@@ -103,6 +115,8 @@ Meeting title:
 
 Processing mode:
 {mode}
+
+{special_instructions_block}
 
 Your task:
 Transform the raw transcript into clear, structured, business-ready meeting notes.
@@ -139,13 +153,18 @@ Transcript:
 
 
 def process_transcript(
-    transcript: str, meeting_title: str, mode: str
+    transcript: str, meeting_title: str, mode: str, special_instructions: str = ""
 ) -> Dict[str, Any]:
 
     if not transcript.strip():
         raise ValueError("Transcript is empty.")
 
-    prompt = build_prompt(transcript=transcript, meeting_title=meeting_title, mode=mode)
+    prompt = build_prompt(
+        transcript=transcript,
+        meeting_title=meeting_title,
+        mode=mode,
+        special_instructions=special_instructions,
+    )
 
     response = client.responses.create(
         model=MODEL,
