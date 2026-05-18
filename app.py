@@ -1,3 +1,4 @@
+import html
 import json
 import os
 from datetime import datetime
@@ -13,7 +14,6 @@ from meeting_manager import (
     init_db,
     create_meeting,
     list_meetings,
-    get_meeting,
     update_meeting_status,
     update_meeting_outputs,
     delete_meeting,
@@ -32,7 +32,10 @@ st.set_page_config(
 init_db()
 
 
-# --- Session state ---
+# ---------------------------
+# SESSION STATE
+# ---------------------------
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -56,6 +59,20 @@ if "output_language_saved" not in st.session_state:
 
 if "saved_file_paths" not in st.session_state:
     st.session_state.saved_file_paths = None
+
+if "edited_text_output" not in st.session_state:
+    st.session_state.edited_text_output = ""
+
+if "edited_email_subject" not in st.session_state:
+    st.session_state.edited_email_subject = ""
+
+if "edited_email_body" not in st.session_state:
+    st.session_state.edited_email_body = ""
+
+
+# ---------------------------
+# HELPER FUNCTIONS
+# ---------------------------
 
 
 def check_password() -> bool:
@@ -93,6 +110,41 @@ def make_safe_filename(title: str) -> str:
         c if c.isalnum() or c in (" ", "-", "_") else "_" for c in title
     )
     return safe_title.replace(" ", "_")
+
+
+def render_edited_text_as_html(title: str, edited_text: str) -> str:
+    escaped_title = html.escape(title)
+    escaped_text = html.escape(edited_text).replace("\n", "<br>")
+
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{escaped_title}</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            line-height: 1.5;
+            color: #222;
+        }}
+        h1 {{
+            color: #1f4e79;
+        }}
+        .content {{
+            white-space: normal;
+        }}
+    </style>
+</head>
+<body>
+    <h1>{escaped_title}</h1>
+    <div class="content">
+        {escaped_text}
+    </div>
+</body>
+</html>
+"""
 
 
 def get_transcript_from_input(
@@ -223,13 +275,19 @@ def run_ai_pipeline(
     st.session_state.output_language_saved = output_language
     st.session_state.saved_file_paths = saved_file_paths
 
+    email = result.get("email_draft", {})
+
+    st.session_state.edited_text_output = text_output
+    st.session_state.edited_email_subject = email.get("subject", "")
+    st.session_state.edited_email_body = email.get("body", "")
+
     return result, html_output, text_output, saved_file_paths
 
 
 def show_results(create_email: bool):
     if st.session_state.result is None:
         st.info(
-            "Generate minutes to see the preview, email draft, JSON, and downloads."
+            "Generate minutes to see the preview, editable output, email draft, JSON, and downloads."
         )
         return
 
@@ -247,9 +305,10 @@ def show_results(create_email: bool):
     safe_title = make_safe_filename(saved_meeting_title)
     base_filename = f"{timestamp}_{safe_title}"
 
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "Preview",
+            "Editable Output",
             "Email Draft",
             "JSON",
             "Downloads",
@@ -266,46 +325,97 @@ def show_results(create_email: bool):
         )
 
     with tab2:
-        st.subheader("Email draft")
+        st.subheader("Editable final minutes")
+
+        st.info(
+            "You can manually edit the final minutes here. "
+            "The edited version will be used for edited TXT/HTML downloads."
+        )
+
+        st.session_state.edited_text_output = st.text_area(
+            "Final meeting minutes",
+            value=st.session_state.edited_text_output or text_output,
+            height=500,
+        )
+
+    with tab3:
+        st.subheader("Editable email draft")
 
         email = result.get("email_draft", {})
 
         if create_email and email.get("needed"):
-            st.text_input(
+            st.session_state.edited_email_subject = st.text_input(
                 "Subject",
-                value=email.get("subject", ""),
+                value=st.session_state.edited_email_subject or email.get("subject", ""),
             )
 
-            st.text_area(
+            st.session_state.edited_email_body = st.text_area(
                 "Body",
-                value=email.get("body", ""),
+                value=st.session_state.edited_email_body or email.get("body", ""),
                 height=300,
             )
 
         elif create_email:
             st.info("AI decided that no email draft is needed.")
 
+            st.session_state.edited_email_subject = st.text_input(
+                "Manual email subject",
+                value=st.session_state.edited_email_subject,
+            )
+
+            st.session_state.edited_email_body = st.text_area(
+                "Manual email body",
+                value=st.session_state.edited_email_body,
+                height=250,
+            )
+
         else:
             st.info("Email draft generation is disabled.")
 
-    with tab3:
+    with tab4:
         st.subheader("Structured JSON output")
         st.json(result)
 
-    with tab4:
+    with tab5:
         st.subheader("Download outputs")
 
+        edited_text = st.session_state.edited_text_output or text_output
+
+        edited_html_output = render_edited_text_as_html(
+            saved_meeting_title,
+            edited_text,
+        )
+
+        edited_email_export = (
+            f"Subject: {st.session_state.edited_email_subject}\n\n"
+            f"{st.session_state.edited_email_body}"
+        )
+
         st.download_button(
-            label="Download OneNote HTML",
+            label="Download original OneNote HTML",
             data=html_output,
-            file_name=f"{base_filename}.html",
+            file_name=f"{base_filename}_original.html",
             mime="text/html",
         )
 
         st.download_button(
-            label="Download plain text minutes",
-            data=text_output,
-            file_name=f"{base_filename}.txt",
+            label="Download edited HTML",
+            data=edited_html_output,
+            file_name=f"{base_filename}_edited.html",
+            mime="text/html",
+        )
+
+        st.download_button(
+            label="Download edited plain text minutes",
+            data=edited_text,
+            file_name=f"{base_filename}_edited.txt",
+            mime="text/plain",
+        )
+
+        st.download_button(
+            label="Download email draft",
+            data=edited_email_export,
+            file_name=f"{base_filename}_email_draft.txt",
             mime="text/plain",
         )
 
@@ -321,11 +431,19 @@ def show_results(create_email: bool):
         )
 
 
+# ---------------------------
+# AUTH
+# ---------------------------
+
 if not check_password():
     st.title("AI Meeting Minutes Agent")
     st.info("Enter password in the sidebar to access the MVP.")
     st.stop()
 
+
+# ---------------------------
+# MAIN APP
+# ---------------------------
 
 st.title("AI Meeting Minutes Agent MVP")
 
@@ -362,6 +480,9 @@ with st.sidebar:
         st.session_state.mode_saved = ""
         st.session_state.output_language_saved = "English"
         st.session_state.saved_file_paths = None
+        st.session_state.edited_text_output = ""
+        st.session_state.edited_email_subject = ""
+        st.session_state.edited_email_body = ""
         st.rerun()
 
     st.divider()
@@ -381,6 +502,7 @@ main_tab_1, main_tab_2, main_tab_3 = st.tabs(
 # ---------------------------
 # TAB 1 — QUICK PROCESS
 # ---------------------------
+
 with main_tab_1:
     st.header("Quick Process")
 
@@ -476,6 +598,7 @@ with main_tab_1:
 # ---------------------------
 # TAB 2 — REGISTER MEETING
 # ---------------------------
+
 with main_tab_2:
     st.header("Register Meeting")
 
@@ -551,6 +674,7 @@ with main_tab_2:
 # ---------------------------
 # TAB 3 — MEETINGS DASHBOARD
 # ---------------------------
+
 with main_tab_3:
     st.header("Meetings Dashboard")
 
@@ -636,16 +760,14 @@ with main_tab_3:
 
                     with st.spinner("Processing registered meeting with AI..."):
                         try:
-                            result, html_output, text_output, saved_paths = (
-                                run_ai_pipeline(
-                                    transcript_for_ai=meeting_transcript_for_ai,
-                                    meeting_title=meeting["meeting_title"],
-                                    mode=meeting["mode"],
-                                    output_language=meeting["output_language"],
-                                    special_instructions=meeting["special_instructions"]
-                                    or "",
-                                    save_locally=save_locally,
-                                )
+                            _, _, _, saved_paths = run_ai_pipeline(
+                                transcript_for_ai=meeting_transcript_for_ai,
+                                meeting_title=meeting["meeting_title"],
+                                mode=meeting["mode"],
+                                output_language=meeting["output_language"],
+                                special_instructions=meeting["special_instructions"]
+                                or "",
+                                save_locally=save_locally,
                             )
 
                             if saved_paths:
