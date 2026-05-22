@@ -20,9 +20,11 @@ __pycache__/
 # Logs
 *.log
 
-# Local generated outputs
+# Generated outputs and local storage
 outputs/
+storage/
 
-#Local database
-meetings.database
+# Local database
+data/
+meetings.db
 *.db

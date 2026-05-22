@@ -1,207 +1,168 @@
 import json
-import os
-from typing import Any, Dict
+from typing import Any
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+from config import CONFIG
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+client = OpenAI(api_key=CONFIG.openai.api_key)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MEETING_MINUTES_SCHEMA = {
-    "name": "meeting_minutes",
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "meeting_summary": {"type": "array", "items": {"type": "string"}},
-            "key_decisions": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "decision": {"type": "string"},
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                        },
-                    },
-                    "required": ["decision", "confidence"],
-                },
-            },
-            "action_items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "owner": {"type": "string"},
-                        "task": {"type": "string"},
-                        "deadline": {"type": "string"},
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                        },
-                    },
-                    "required": ["owner", "task", "deadline", "confidence"],
-                },
-            },
-            "main_topics": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "topic": {"type": "string"},
-                        "summary": {"type": "string"},
-                    },
-                    "required": ["topic", "summary"],
-                },
-            },
-            "open_questions": {"type": "array", "items": {"type": "string"}},
-            "follow_up_required": {"type": "boolean"},
-            "follow_up_reason": {"type": "string"},
-            "email_draft": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "needed": {"type": "boolean"},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string"},
-                },
-                "required": ["needed", "subject", "body"],
-            },
-            "risks_or_uncertainties": {"type": "array", "items": {"type": "string"}},
+MEETING_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "Concise professional meeting summary.",
         },
-        "required": [
-            "meeting_summary",
-            "key_decisions",
-            "action_items",
-            "main_topics",
-            "open_questions",
-            "follow_up_required",
-            "follow_up_reason",
-            "email_draft",
-            "risks_or_uncertainties",
-        ],
+        "topics": {
+            "type": "array",
+            "description": "Main discussion topics.",
+            "items": {
+                "type": "string",
+            },
+        },
+        "decisions": {
+            "type": "array",
+            "description": "Clear decisions made during the meeting.",
+            "items": {
+                "type": "string",
+            },
+        },
+        "action_items": {
+            "type": "array",
+            "description": "Concrete action items or next steps.",
+            "items": {
+                "type": "string",
+            },
+        },
+        "followups": {
+            "type": "array",
+            "description": "Topics or actions requiring follow-up.",
+            "items": {
+                "type": "string",
+            },
+        },
+        "risks_or_open_questions": {
+            "type": "array",
+            "description": "Risks, uncertainties, or open questions.",
+            "items": {
+                "type": "string",
+            },
+        },
+        "email_required": {
+            "type": "boolean",
+            "description": "Whether a follow-up email draft is useful.",
+        },
+        "email_subject": {
+            "type": "string",
+            "description": "Suggested email subject if email_required is true.",
+        },
+        "email_body": {
+            "type": "string",
+            "description": "Suggested plain-text email body if email_required is true.",
+        },
     },
-    "strict": True,
+    "required": [
+        "summary",
+        "topics",
+        "decisions",
+        "action_items",
+        "followups",
+        "risks_or_open_questions",
+        "email_required",
+        "email_subject",
+        "email_body",
+    ],
 }
 
 
-def build_prompt(
-    transcript: str,
-    meeting_title: str,
-    mode: str,
-    output_language: str,
-    special_instructions: str = "",
-) -> str:
+def build_system_prompt() -> str:
+    return """
+You are an expert executive assistant specialized in turning meeting transcripts
+into accurate, structured, business-ready meeting minutes.
 
-    special_instructions_block = ""
-
-    if special_instructions.strip():
-        special_instructions_block = f"""
-Special instructions for this meeting:
-{special_instructions}
-
-These instructions are important, but you must still follow the transcript strictly and must not invent facts.
+You must follow these rules:
+- Use only information found in the transcript.
+- Do not invent facts, decisions, deadlines, owners, or participants.
+- If something is unclear, mention it under risks_or_open_questions.
+- Extract action items only when a concrete task or next step is present.
+- Extract decisions only when a conclusion or agreement is clearly stated.
+- Keep the output concise, professional, and useful.
+- If no email is needed, set email_required to false and leave email_subject and email_body empty.
+- Always return valid JSON according to the provided schema.
 """
 
-    return f"""
-You are an expert executive assistant creating professional meeting minutes from a Microsoft Teams transcript.
 
+def build_user_prompt(
+    transcript: str,
+    meeting_title: str,
+    transcript_language: str,
+    summary_mode: str,
+    special_instructions: str,
+) -> str:
+    return f"""
 Meeting title:
 {meeting_title}
 
-Processing mode:
-{mode}
+Transcript language / desired output language:
+{transcript_language}
 
-Output language:
-{output_language}
+Summary mode:
+{summary_mode}
 
-All generated meeting minutes, decisions, action items, risks, and email drafts must be written in this output language.
-
-{special_instructions_block}
-
-Your task:
-Transform the raw transcript into clear, structured, business-ready meeting notes.
-
-Important rules:
-- Use only information present in the transcript.
-- Do not invent facts, names, owners, deadlines, or decisions.
-- Ignore greetings, repetitions, filler language, and small talk.
-- Clearly distinguish between:
-  - discussion
-  - decision
-  - action item
-- A decision must be clearly agreed or concluded.
-- An action item must contain a clear next step.
-- If owner is unclear, write "Owner not specified".
-- If deadline is unclear, write "No deadline specified".
-- Keep language concise, structured, and professional.
-- If no follow-up email is needed:
-  - set email_draft.needed to false
-  - leave subject/body empty.
-- Mention unclear points in risks_or_uncertainties.
-
-Mode behavior:
-- Standard Minutes:
-  balanced professional output.
-- Action Items Only:
-  prioritize action items and decisions.
-- Executive Summary:
-  concise high-level business overview.
+Special instructions:
+{special_instructions or "None"}
 
 Transcript:
 {transcript}
 """
 
 
-def process_transcript(
+def process_meeting_transcript(
     transcript: str,
     meeting_title: str,
-    mode: str,
-    output_language: str,
+    transcript_language: str,
+    summary_mode: str,
     special_instructions: str = "",
-) -> Dict[str, Any]:
-
-    if not transcript.strip():
+) -> dict[str, Any]:
+    if not transcript or not transcript.strip():
         raise ValueError("Transcript is empty.")
 
-    prompt = build_prompt(
-        transcript=transcript,
-        meeting_title=meeting_title,
-        mode=mode,
-        output_language=output_language,
-        special_instructions=special_instructions,
-    )
-
     response = client.responses.create(
-        model=MODEL,
+        model=CONFIG.openai.model,
         input=[
             {
                 "role": "system",
-                "content": (
-                    "You produce accurate meeting minutes " "in strict valid JSON."
+                "content": build_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": build_user_prompt(
+                    transcript=transcript,
+                    meeting_title=meeting_title,
+                    transcript_language=transcript_language,
+                    summary_mode=summary_mode,
+                    special_instructions=special_instructions,
                 ),
             },
-            {"role": "user", "content": prompt},
         ],
         text={
             "format": {
                 "type": "json_schema",
-                "name": MEETING_MINUTES_SCHEMA["name"],
-                "schema": MEETING_MINUTES_SCHEMA["schema"],
+                "name": "meeting_minutes_output",
+                "schema": MEETING_OUTPUT_SCHEMA,
                 "strict": True,
             }
         },
-        store=False,
     )
 
-    output_text = response.output_text
+    raw_output = response.output_text
 
-    return json.loads(output_text)
+    try:
+        return json.loads(raw_output)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Failed to parse AI response as JSON: {error}\n\nRaw output:\n{raw_output}"
+        )

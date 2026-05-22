@@ -1,46 +1,151 @@
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
 
-OUTPUT_DIR = Path("outputs")
+BASE_STORAGE_DIR = Path("storage")
+
+HTML_DIR = BASE_STORAGE_DIR / "html"
+TEXT_DIR = BASE_STORAGE_DIR / "text"
+JSON_DIR = BASE_STORAGE_DIR / "json"
+
+for directory in [
+    BASE_STORAGE_DIR,
+    HTML_DIR,
+    TEXT_DIR,
+    JSON_DIR,
+]:
+    directory.mkdir(parents=True, exist_ok=True)
 
 
-def make_safe_filename(title: str) -> str:
-    safe_title = "".join(
-        c if c.isalnum() or c in (" ", "-", "_") else "_" for c in title
-    )
-    return safe_title.replace(" ", "_")
+def sanitize_filename(name: str) -> str:
+    invalid_characters = [
+        "\\",
+        "/",
+        ":",
+        "*",
+        "?",
+        '"',
+        "<",
+        ">",
+        "|",
+    ]
+
+    sanitized = name.strip()
+
+    for char in invalid_characters:
+        sanitized = sanitized.replace(char, "_")
+
+    sanitized = sanitized.replace(" ", "_")
+
+    return sanitized
 
 
-def save_outputs_locally(
+def build_storage_filename(
     meeting_title: str,
-    timestamp: str,
-    html_output: str,
-    text_output: str,
-    json_output: Dict[str, Any],
-) -> Dict[str, str]:
-    """
-    Saves generated meeting minutes locally in HTML, TXT and JSON formats.
-    Returns file paths as strings.
-    """
+    extension: str,
+) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    safe_title = sanitize_filename(meeting_title)
 
-    safe_title = make_safe_filename(meeting_title)
-    base_filename = f"{timestamp}_{safe_title}"
+    return f"{timestamp}_{safe_title}.{extension}"
 
-    html_path = OUTPUT_DIR / f"{base_filename}.html"
-    txt_path = OUTPUT_DIR / f"{base_filename}.txt"
-    json_path = OUTPUT_DIR / f"{base_filename}.json"
 
-    html_path.write_text(html_output, encoding="utf-8")
-    txt_path.write_text(text_output, encoding="utf-8")
-    json_path.write_text(
-        json.dumps(json_output, indent=2, ensure_ascii=False), encoding="utf-8"
+def save_html_summary(
+    meeting_title: str,
+    html_content: str,
+) -> str:
+    filename = build_storage_filename(
+        meeting_title,
+        "html",
+    )
+
+    path = HTML_DIR / filename
+
+    path.write_text(
+        html_content,
+        encoding="utf-8",
+    )
+
+    return str(path)
+
+
+def save_text_summary(
+    meeting_title: str,
+    text_content: str,
+) -> str:
+    filename = build_storage_filename(
+        meeting_title,
+        "txt",
+    )
+
+    path = TEXT_DIR / filename
+
+    path.write_text(
+        text_content,
+        encoding="utf-8",
+    )
+
+    return str(path)
+
+
+def save_json_result(
+    meeting_title: str,
+    data: dict,
+) -> str:
+    filename = build_storage_filename(
+        meeting_title,
+        "json",
+    )
+
+    path = JSON_DIR / filename
+
+    path.write_text(
+        json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    return str(path)
+
+
+def save_meeting_artifacts(
+    meeting_title: str,
+    html_summary: str,
+    text_summary: str,
+    ai_result: dict,
+) -> dict:
+    html_path = save_html_summary(
+        meeting_title=meeting_title,
+        html_content=html_summary,
+    )
+
+    text_path = save_text_summary(
+        meeting_title=meeting_title,
+        text_content=text_summary,
+    )
+
+    json_path = save_json_result(
+        meeting_title=meeting_title,
+        data=ai_result,
     )
 
     return {
-        "html": str(html_path),
-        "txt": str(txt_path),
-        "json": str(json_path),
+        "html_path": html_path,
+        "text_path": text_path,
+        "json_path": json_path,
     }
+
+
+def load_json_file(
+    file_path: str,
+) -> dict:
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"File does not exist: {file_path}")
+
+    return json.loads(path.read_text(encoding="utf-8"))

@@ -1,126 +1,139 @@
 import sqlite3
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from pathlib import Path
 
-DB_PATH = "meetings.db"
+DATABASE_DIR = Path("data")
+DATABASE_DIR.mkdir(exist_ok=True)
+
+DATABASE_PATH = DATABASE_DIR / "meetings.db"
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    connection = sqlite3.connect(DATABASE_PATH)
+
+    connection.row_factory = sqlite3.Row
+
+    return connection
 
 
-def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+def initialize_database():
+    connection = get_connection()
 
-
-def init_db() -> None:
-    conn = get_connection()
-    cursor = conn.cursor()
+    cursor = connection.cursor()
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            meeting_title TEXT NOT NULL,
-            meeting_link TEXT,
-            mode TEXT NOT NULL,
-            output_language TEXT NOT NULL,
-            special_instructions TEXT,
-            create_email INTEGER DEFAULT 1,
-            status TEXT NOT NULL DEFAULT 'registered',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            last_processed_at TEXT,
-            output_html_path TEXT,
-            output_txt_path TEXT,
-            output_json_path TEXT
-        )
-        """)
+    CREATE TABLE IF NOT EXISTS meetings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    conn.commit()
-    conn.close()
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+
+        workspace_id TEXT NOT NULL,
+
+        created_by TEXT NOT NULL,
+
+        meeting_title TEXT NOT NULL,
+        meeting_link TEXT,
+
+        transcript_language TEXT,
+        summary_mode TEXT,
+        special_instructions TEXT,
+
+        transcript_text TEXT,
+        summary_html TEXT,
+
+        onenote_page_url TEXT,
+        onenote_page_id TEXT,
+
+        outlook_draft_id TEXT,
+        outlook_draft_subject TEXT,
+
+        status TEXT NOT NULL
+    )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+def current_timestamp() -> str:
+    return datetime.now().isoformat()
 
 
 def create_meeting(
+    workspace_id: str,
+    created_by: str,
     meeting_title: str,
-    meeting_link: str,
-    mode: str,
-    output_language: str,
-    special_instructions: str,
-    create_email: bool,
+    meeting_link: str | None = None,
+    transcript_language: str | None = None,
+    summary_mode: str | None = None,
+    special_instructions: str | None = None,
 ) -> int:
-    conn = get_connection()
-    cursor = conn.cursor()
+    connection = get_connection()
 
-    timestamp = now_iso()
+    cursor = connection.cursor()
+
+    now = current_timestamp()
 
     cursor.execute(
         """
-        INSERT INTO meetings (
-            meeting_title,
-            meeting_link,
-            mode,
-            output_language,
-            special_instructions,
-            create_email,
-            status,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+    INSERT INTO meetings (
+        created_at,
+        updated_at,
+
+        workspace_id,
+        created_by,
+
+        meeting_title,
+        meeting_link,
+
+        transcript_language,
+        summary_mode,
+        special_instructions,
+
+        status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
         (
+            now,
+            now,
+            workspace_id,
+            created_by,
             meeting_title,
             meeting_link,
-            mode,
-            output_language,
+            transcript_language,
+            summary_mode,
             special_instructions,
-            int(create_email),
-            "registered",
-            timestamp,
-            timestamp,
+            "created",
         ),
     )
 
     meeting_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+
+    connection.commit()
+    connection.close()
 
     return meeting_id
 
 
-def list_meetings() -> List[Dict[str, Any]]:
-    conn = get_connection()
-    cursor = conn.cursor()
+def get_meeting(meeting_id: int) -> dict | None:
+    connection = get_connection()
 
-    cursor.execute("""
-        SELECT *
-        FROM meetings
-        ORDER BY created_at DESC
-        """)
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    return [dict(row) for row in rows]
-
-
-def get_meeting(meeting_id: int) -> Optional[Dict[str, Any]]:
-    conn = get_connection()
-    cursor = conn.cursor()
+    cursor = connection.cursor()
 
     cursor.execute(
         """
-        SELECT *
-        FROM meetings
-        WHERE id = ?
-        """,
+    SELECT *
+    FROM meetings
+    WHERE id = ?
+    """,
         (meeting_id,),
     )
 
     row = cursor.fetchone()
-    conn.close()
+
+    connection.close()
 
     if row is None:
         return None
@@ -128,79 +141,147 @@ def get_meeting(meeting_id: int) -> Optional[Dict[str, Any]]:
     return dict(row)
 
 
-def update_meeting_status(
+def update_meeting_transcript(
     meeting_id: int,
-    status: str,
-) -> None:
-    conn = get_connection()
-    cursor = conn.cursor()
+    transcript_text: str,
+):
+    connection = get_connection()
+
+    cursor = connection.cursor()
 
     cursor.execute(
         """
-        UPDATE meetings
-        SET status = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
+    UPDATE meetings
+    SET
+        transcript_text = ?,
+        updated_at = ?,
+        status = ?
+    WHERE id = ?
+    """,
         (
-            status,
-            now_iso(),
+            transcript_text,
+            current_timestamp(),
+            "transcript_uploaded",
             meeting_id,
         ),
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
 
 
-def update_meeting_outputs(
+def update_meeting_summary(
     meeting_id: int,
-    html_path: Optional[str],
-    txt_path: Optional[str],
-    json_path: Optional[str],
-) -> None:
-    conn = get_connection()
-    cursor = conn.cursor()
+    summary_html: str,
+):
+    connection = get_connection()
 
-    timestamp = now_iso()
+    cursor = connection.cursor()
 
     cursor.execute(
         """
-        UPDATE meetings
-        SET status = ?,
-            last_processed_at = ?,
-            updated_at = ?,
-            output_html_path = ?,
-            output_txt_path = ?,
-            output_json_path = ?
-        WHERE id = ?
-        """,
+    UPDATE meetings
+    SET
+        summary_html = ?,
+        updated_at = ?,
+        status = ?
+    WHERE id = ?
+    """,
         (
-            "completed",
-            timestamp,
-            timestamp,
-            html_path,
-            txt_path,
-            json_path,
+            summary_html,
+            current_timestamp(),
+            "summary_generated",
             meeting_id,
         ),
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
 
 
-def delete_meeting(meeting_id: int) -> None:
-    conn = get_connection()
-    cursor = conn.cursor()
+def update_onenote_result(
+    meeting_id: int,
+    onenote_page_url: str,
+    onenote_page_id: str,
+):
+    connection = get_connection()
+
+    cursor = connection.cursor()
 
     cursor.execute(
         """
-        DELETE FROM meetings
-        WHERE id = ?
-        """,
-        (meeting_id,),
+    UPDATE meetings
+    SET
+        onenote_page_url = ?,
+        onenote_page_id = ?,
+        updated_at = ?,
+        status = ?
+    WHERE id = ?
+    """,
+        (
+            onenote_page_url,
+            onenote_page_id,
+            current_timestamp(),
+            "onenote_created",
+            meeting_id,
+        ),
     )
 
-    conn.commit()
-    conn.close()
+    connection.commit()
+    connection.close()
+
+
+def update_outlook_result(
+    meeting_id: int,
+    draft_id: str,
+    draft_subject: str,
+):
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+    UPDATE meetings
+    SET
+        outlook_draft_id = ?,
+        outlook_draft_subject = ?,
+        updated_at = ?,
+        status = ?
+    WHERE id = ?
+    """,
+        (
+            draft_id,
+            draft_subject,
+            current_timestamp(),
+            "outlook_draft_created",
+            meeting_id,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def list_recent_meetings(
+    limit: int = 20,
+) -> list[dict]:
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+    SELECT *
+    FROM meetings
+    ORDER BY id DESC
+    LIMIT ?
+    """,
+        (limit,),
+    )
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
