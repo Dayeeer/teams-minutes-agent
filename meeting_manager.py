@@ -10,15 +10,16 @@ DATABASE_PATH = DATABASE_DIR / "meetings.db"
 
 def get_connection():
     connection = sqlite3.connect(DATABASE_PATH)
-
     connection.row_factory = sqlite3.Row
-
     return connection
+
+
+def current_timestamp() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def initialize_database():
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -29,7 +30,6 @@ def initialize_database():
         updated_at TEXT NOT NULL,
 
         workspace_id TEXT NOT NULL,
-
         created_by TEXT NOT NULL,
 
         meeting_title TEXT NOT NULL,
@@ -40,6 +40,10 @@ def initialize_database():
         special_instructions TEXT,
 
         transcript_text TEXT,
+        transcript_status TEXT DEFAULT 'manual_only',
+        auto_fetch_attempts INTEGER DEFAULT 0,
+        last_transcript_check TEXT,
+
         summary_html TEXT,
 
         onenote_page_url TEXT,
@@ -56,10 +60,6 @@ def initialize_database():
     connection.close()
 
 
-def current_timestamp() -> str:
-    return datetime.now().isoformat()
-
-
 def create_meeting(
     workspace_id: str,
     created_by: str,
@@ -68,9 +68,9 @@ def create_meeting(
     transcript_language: str | None = None,
     summary_mode: str | None = None,
     special_instructions: str | None = None,
+    transcript_status: str = "manual_only",
 ) -> int:
     connection = get_connection()
-
     cursor = connection.cursor()
 
     now = current_timestamp()
@@ -91,9 +91,13 @@ def create_meeting(
         summary_mode,
         special_instructions,
 
+        transcript_status,
+        auto_fetch_attempts,
+        last_transcript_check,
+
         status
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
             now,
@@ -105,6 +109,9 @@ def create_meeting(
             transcript_language,
             summary_mode,
             special_instructions,
+            transcript_status,
+            0,
+            None,
             "created",
         ),
     )
@@ -119,7 +126,6 @@ def create_meeting(
 
 def get_meeting(meeting_id: int) -> dict | None:
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -132,7 +138,6 @@ def get_meeting(meeting_id: int) -> dict | None:
     )
 
     row = cursor.fetchone()
-
     connection.close()
 
     if row is None:
@@ -141,27 +146,44 @@ def get_meeting(meeting_id: int) -> dict | None:
     return dict(row)
 
 
-def update_meeting_transcript(
+def list_recent_meetings(limit: int = 20) -> list[dict]:
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+    SELECT *
+    FROM meetings
+    ORDER BY id DESC
+    LIMIT ?
+    """,
+        (limit,),
+    )
+
+    rows = cursor.fetchall()
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+def update_meeting_status(
     meeting_id: int,
-    transcript_text: str,
+    status: str,
 ):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
         """
     UPDATE meetings
     SET
-        transcript_text = ?,
-        updated_at = ?,
-        status = ?
+        status = ?,
+        updated_at = ?
     WHERE id = ?
     """,
         (
-            transcript_text,
+            status,
             current_timestamp(),
-            "transcript_uploaded",
             meeting_id,
         ),
     )
@@ -170,12 +192,112 @@ def update_meeting_transcript(
     connection.close()
 
 
+def update_meeting_transcript(
+    meeting_id: int,
+    transcript_text: str,
+    transcript_status: str = "manual_uploaded",
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+    UPDATE meetings
+    SET
+        transcript_text = ?,
+        transcript_status = ?,
+        updated_at = ?,
+        status = ?
+    WHERE id = ?
+    """,
+        (
+            transcript_text,
+            transcript_status,
+            current_timestamp(),
+            "transcript_ready",
+            meeting_id,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def update_transcript_fetch_status(
+    meeting_id: int,
+    transcript_status: str,
+    transcript_text: str | None = None,
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    current_meeting = get_meeting(meeting_id)
+
+    if current_meeting is None:
+        return {
+            "success": False,
+            "error": "Meeting not found.",
+        }
+
+    current_attempts = current_meeting.get("auto_fetch_attempts") or 0
+
+    if transcript_text is not None:
+        cursor.execute(
+            """
+        UPDATE meetings
+        SET
+            transcript_status = ?,
+            transcript_text = ?,
+            auto_fetch_attempts = ?,
+            last_transcript_check = ?,
+            updated_at = ?,
+            status = ?
+        WHERE id = ?
+        """,
+            (
+                transcript_status,
+                transcript_text,
+                current_attempts + 1,
+                current_timestamp(),
+                current_timestamp(),
+                "transcript_ready",
+                meeting_id,
+            ),
+        )
+
+    else:
+        cursor.execute(
+            """
+        UPDATE meetings
+        SET
+            transcript_status = ?,
+            auto_fetch_attempts = ?,
+            last_transcript_check = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+            (
+                transcript_status,
+                current_attempts + 1,
+                current_timestamp(),
+                current_timestamp(),
+                meeting_id,
+            ),
+        )
+
+    connection.commit()
+    connection.close()
+
+    return {
+        "success": True,
+    }
+
+
 def update_meeting_summary(
     meeting_id: int,
     summary_html: str,
 ):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -205,7 +327,6 @@ def update_onenote_result(
     onenote_page_id: str,
 ):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -237,7 +358,6 @@ def update_outlook_result(
     draft_subject: str,
 ):
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute(
@@ -261,27 +381,3 @@ def update_outlook_result(
 
     connection.commit()
     connection.close()
-
-
-def list_recent_meetings(
-    limit: int = 20,
-) -> list[dict]:
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute(
-        """
-    SELECT *
-    FROM meetings
-    ORDER BY id DESC
-    LIMIT ?
-    """,
-        (limit,),
-    )
-
-    rows = cursor.fetchall()
-
-    connection.close()
-
-    return [dict(row) for row in rows]
