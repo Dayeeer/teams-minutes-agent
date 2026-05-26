@@ -1,5 +1,3 @@
-import json
-
 import streamlit as st
 
 from config import CONFIG
@@ -82,8 +80,7 @@ def microsoft_login_ui():
         st.success(f"Connected as {identity.get('email')}")
         return True
 
-    query_params = st.query_params
-    auth_code = query_params.get("code")
+    auth_code = st.query_params.get("code")
 
     if auth_code:
         with st.spinner("Connecting Microsoft account..."):
@@ -96,14 +93,11 @@ def microsoft_login_ui():
             st.session_state.identity = result["identity"]
 
             st.query_params.clear()
-
-            st.success(f"Connected as {result['identity']['email']}")
             st.rerun()
 
-        else:
-            st.error("Microsoft authentication failed.")
-            st.json(result)
-            return False
+        st.error("Microsoft authentication failed.")
+        st.json(result)
+        return False
 
     auth_url = get_auth_url()
 
@@ -114,10 +108,11 @@ def microsoft_login_ui():
                 background-color:#2563eb;
                 color:white;
                 border:none;
-                padding:0.6rem 1rem;
+                padding:0.7rem 1.2rem;
                 border-radius:0.5rem;
                 cursor:pointer;
                 font-size:1rem;
+                font-weight:600;
             ">
                 Login with Microsoft
             </button>
@@ -126,7 +121,7 @@ def microsoft_login_ui():
         unsafe_allow_html=True,
     )
 
-    st.info("Login using your NRGeer Microsoft account.")
+    st.info("Login using the NRGeer Microsoft account.")
     return False
 
 
@@ -169,11 +164,13 @@ def meeting_setup_ui():
         height=100,
     )
 
+    st.subheader("3. Transcript Source")
+
     transcript_mode = st.radio(
-        "Transcript mode",
+        "Choose how the transcript should be provided",
         [
-            "Manual transcript input",
             "Automatic Teams transcript check",
+            "Manual transcript input",
         ],
         index=0,
     )
@@ -188,7 +185,6 @@ def meeting_setup_ui():
     }
 
     st.session_state.meeting_config = meeting_config
-
     return meeting_config
 
 
@@ -217,12 +213,88 @@ def create_or_get_meeting_record(meeting_config: dict) -> int:
     )
 
     st.session_state.meeting_id = meeting_id
-
     return meeting_id
 
 
+def show_transcript_preview(transcript_text: str):
+    cleaned = clean_transcript(transcript_text)
+    speakers = extract_speakers(cleaned)
+
+    st.session_state.raw_transcript = transcript_text
+    st.session_state.cleaned_transcript = cleaned
+
+    st.caption(
+        f"Raw length: {len(transcript_text)} chars | "
+        f"Cleaned length: {len(cleaned)} chars"
+    )
+
+    if speakers:
+        st.caption(f"Detected speakers: {', '.join(speakers)}")
+
+    with st.expander("Preview cleaned transcript"):
+        st.text_area(
+            "Cleaned transcript",
+            value=cleaned,
+            height=250,
+        )
+
+
+def automatic_transcript_ui(meeting_config: dict):
+    st.subheader("Automatic Teams Transcript")
+
+    st.info(
+        "The meeting must be finished and transcription must have been enabled. "
+        "The service account should be invited to the meeting."
+    )
+
+    if not meeting_config["meeting_link"].strip():
+        st.warning("Paste the Teams meeting link first.")
+        return ""
+
+    meeting_id = create_or_get_meeting_record(meeting_config)
+
+    if st.button("Check Teams transcript now", type="primary"):
+        with st.spinner("Checking Teams transcript..."):
+            result = try_fetch_transcript_from_teams(
+                access_token=st.session_state.access_token,
+                meeting_link=meeting_config["meeting_link"],
+            )
+
+        st.session_state.teams_fetch_result = result
+
+        if result.get("success"):
+            transcript_content = result.get("content", "")
+
+            update_transcript_fetch_status(
+                meeting_id=meeting_id,
+                transcript_status="transcript_downloaded",
+                transcript_text=transcript_content,
+            )
+
+            st.session_state.raw_transcript = transcript_content
+            st.success("Transcript downloaded from Teams.")
+            show_transcript_preview(transcript_content)
+            return transcript_content
+
+        update_transcript_fetch_status(
+            meeting_id=meeting_id,
+            transcript_status=result.get("status", "auto_fetch_failed"),
+        )
+
+        st.warning(result.get("message", "Transcript not available yet."))
+
+        with st.expander("Technical details"):
+            st.json(result)
+
+    if st.session_state.raw_transcript:
+        show_transcript_preview(st.session_state.raw_transcript)
+        return st.session_state.raw_transcript
+
+    return ""
+
+
 def manual_transcript_input_ui():
-    st.subheader("3. Transcript Input")
+    st.subheader("Manual Transcript Input")
 
     input_mode = st.radio(
         "Manual transcript input method",
@@ -264,85 +336,6 @@ def manual_transcript_input_ui():
         show_transcript_preview(transcript_text)
 
     return transcript_text
-
-
-def automatic_transcript_ui(meeting_config: dict):
-    st.subheader("3. Automatic Teams Transcript")
-
-    st.info(
-        "This mode will try to fetch the transcript from Teams automatically. "
-        "The meeting must be finished and transcription must have been enabled."
-    )
-
-    if not meeting_config["meeting_link"].strip():
-        st.warning("Please paste a Teams meeting link first.")
-        return ""
-
-    meeting_id = create_or_get_meeting_record(meeting_config)
-
-    if st.button("Check Teams transcript now"):
-        with st.spinner("Checking Teams transcript..."):
-            result = try_fetch_transcript_from_teams(
-                access_token=st.session_state.access_token,
-                meeting_link=meeting_config["meeting_link"],
-            )
-
-        st.session_state.teams_fetch_result = result
-
-        if result.get("success"):
-            transcript_content = result.get("content", "")
-
-            update_transcript_fetch_status(
-                meeting_id=meeting_id,
-                transcript_status="transcript_downloaded",
-                transcript_text=transcript_content,
-            )
-
-            st.session_state.raw_transcript = transcript_content
-
-            st.success("Transcript downloaded from Teams.")
-            show_transcript_preview(transcript_content)
-
-            return transcript_content
-
-        update_transcript_fetch_status(
-            meeting_id=meeting_id,
-            transcript_status=result.get("status", "auto_fetch_failed"),
-        )
-
-        st.warning(result.get("message", "Transcript not available yet."))
-
-        with st.expander("Technical details"):
-            st.json(result)
-
-    if st.session_state.raw_transcript:
-        show_transcript_preview(st.session_state.raw_transcript)
-        return st.session_state.raw_transcript
-
-    return ""
-
-
-def show_transcript_preview(transcript_text: str):
-    cleaned = clean_transcript(transcript_text)
-    speakers = extract_speakers(cleaned)
-
-    st.session_state.cleaned_transcript = cleaned
-    st.session_state.raw_transcript = transcript_text
-
-    st.caption(
-        f"Raw length: {len(transcript_text)} chars | "
-        f"Cleaned length: {len(cleaned)} chars"
-    )
-
-    if speakers:
-        st.caption(f"Detected speakers: {', '.join(speakers)}")
-
-    with st.expander("Preview cleaned transcript"):
-        st.text_area(
-            "Cleaned transcript",
-            value=cleaned,
-            height=250,
-        )
 
 
 def generate_summary(meeting_config: dict, transcript_text: str):
@@ -578,10 +571,10 @@ def main():
 
     meeting_config = meeting_setup_ui()
 
-    if meeting_config["transcript_mode"] == "Manual transcript input":
-        transcript_text = manual_transcript_input_ui()
-    else:
+    if meeting_config["transcript_mode"] == "Automatic Teams transcript check":
         transcript_text = automatic_transcript_ui(meeting_config)
+    else:
+        transcript_text = manual_transcript_input_ui()
 
     st.divider()
 
@@ -592,7 +585,7 @@ def main():
 
         if not transcript_text.strip():
             st.error(
-                "Transcript is required. Paste/upload it manually or fetch it from Teams."
+                "Transcript is required. Fetch it from Teams or provide it manually."
             )
             return
 
