@@ -151,3 +151,45 @@ def create_outlook_draft(
         endpoint="/me/messages",
         json_data=payload,
     )
+
+
+def graph_get_raw(
+    access_token: str,
+    endpoint: str,
+    accept: str = "text/plain",
+) -> dict:
+    response = requests.get(
+        build_graph_url(endpoint),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": accept,
+        },
+    )
+
+    return {
+        "success": response.ok,
+        "status_code": response.status_code,
+        "text": response.text,
+        "headers": dict(response.headers),
+    }
+
+
+def graph_get_raw(
+    access_token: str,
+    endpoint: str,
+    accept: str = "text/plain",
+) -> dict:
+    response = requests.get(
+        build_graph_url(endpoint),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": accept,
+        },
+    )
+
+    return {
+        "success": response.ok,
+        "status_code": response.status_code,
+        "text": response.text,
+        "headers": dict(response.headers),
+    }
