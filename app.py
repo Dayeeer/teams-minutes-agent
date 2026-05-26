@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 
 import streamlit as st
 
@@ -14,6 +13,7 @@ from meeting_manager import (
     initialize_database,
     create_meeting,
     update_meeting_transcript,
+    update_transcript_fetch_status,
     update_meeting_summary,
     update_onenote_result,
     update_outlook_result,
@@ -21,13 +21,13 @@ from meeting_manager import (
 )
 from onenote_service import create_meeting_onenote_page
 from outlook_service import create_followup_email_draft
+from teams_transcript_service import try_fetch_transcript_from_teams
 
 st.set_page_config(
     page_title="AI Meeting Minutes Agent",
     page_icon="📝",
     layout="wide",
 )
-
 
 initialize_database()
 
@@ -39,14 +39,17 @@ def init_session_state():
         "access_token": None,
         "identity": None,
         "meeting_id": None,
+        "meeting_config": None,
+        "raw_transcript": "",
+        "cleaned_transcript": "",
         "ai_result": None,
         "summary_html": "",
         "plain_text_summary": "",
-        "cleaned_transcript": "",
         "editable_summary_html": "",
         "onenote_result": None,
         "outlook_result": None,
         "storage_result": None,
+        "teams_fetch_result": None,
     }
 
     for key, value in defaults.items():
@@ -76,47 +79,54 @@ def microsoft_login_ui():
 
     if st.session_state.authenticated:
         identity = st.session_state.identity
-
         st.success(f"Connected as {identity.get('email')}")
-
         return True
 
-    auth_url = get_auth_url()
+    query_params = st.query_params
+    auth_code = query_params.get("code")
 
-    st.markdown(f"[Login with Microsoft]({auth_url})")
+    if auth_code:
+        with st.spinner("Connecting Microsoft account..."):
+            result = authenticate_user(auth_code)
 
-    st.info(
-        "After login, Microsoft will redirect to localhost. "
-        "Copy only the value after `code=` and paste it below."
-    )
+        if result.get("success"):
+            st.session_state.authenticated = True
+            st.session_state.auth_result = result
+            st.session_state.access_token = result["access_token"]
+            st.session_state.identity = result["identity"]
 
-    auth_code = st.text_area(
-        "Authorization code",
-        height=100,
-        placeholder="Paste only the code value here",
-    )
+            st.query_params.clear()
 
-    if st.button("Connect Microsoft Account"):
-        if not auth_code.strip():
-            st.error("Please paste the authorization code.")
-            return False
+            st.success(f"Connected as {result['identity']['email']}")
+            st.rerun()
 
-        result = authenticate_user(auth_code.strip())
-
-        if not result.get("success"):
+        else:
             st.error("Microsoft authentication failed.")
             st.json(result)
             return False
 
-        st.session_state.authenticated = True
-        st.session_state.auth_result = result
-        st.session_state.access_token = result["access_token"]
-        st.session_state.identity = result["identity"]
+    auth_url = get_auth_url()
 
-        st.success(f"Connected as {result['identity']['email']}")
+    st.markdown(
+        f"""
+        <a href="{auth_url}" target="_self">
+            <button style="
+                background-color:#2563eb;
+                color:white;
+                border:none;
+                padding:0.6rem 1rem;
+                border-radius:0.5rem;
+                cursor:pointer;
+                font-size:1rem;
+            ">
+                Login with Microsoft
+            </button>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        st.rerun()
-
+    st.info("Login using your NRGeer Microsoft account.")
     return False
 
 
@@ -134,27 +144,19 @@ def meeting_setup_ui():
         meeting_link = st.text_input(
             "Teams meeting link",
             value="",
+            placeholder="Paste Teams meeting link here",
         )
 
     with col2:
         transcript_language = st.selectbox(
             "Output language",
-            [
-                "English",
-                "Italian",
-                "German",
-                "Russian",
-            ],
+            ["English", "Italian", "German", "Russian"],
             index=0,
         )
 
         summary_mode = st.selectbox(
             "Summary mode",
-            [
-                "Standard Minutes",
-                "Executive Summary",
-                "Action Items Only",
-            ],
+            ["Standard Minutes", "Executive Summary", "Action Items Only"],
             index=0,
         )
 
@@ -167,20 +169,63 @@ def meeting_setup_ui():
         height=100,
     )
 
-    return {
+    transcript_mode = st.radio(
+        "Transcript mode",
+        [
+            "Manual transcript input",
+            "Automatic Teams transcript check",
+        ],
+        index=0,
+    )
+
+    meeting_config = {
         "meeting_title": meeting_title,
         "meeting_link": meeting_link,
         "transcript_language": transcript_language,
         "summary_mode": summary_mode,
         "special_instructions": special_instructions,
+        "transcript_mode": transcript_mode,
     }
 
+    st.session_state.meeting_config = meeting_config
 
-def transcript_input_ui():
+    return meeting_config
+
+
+def create_or_get_meeting_record(meeting_config: dict) -> int:
+    if st.session_state.meeting_id:
+        return st.session_state.meeting_id
+
+    identity = st.session_state.identity
+    workspace = get_workspace()
+
+    transcript_status = (
+        "waiting_for_transcript"
+        if meeting_config["transcript_mode"] == "Automatic Teams transcript check"
+        else "manual_only"
+    )
+
+    meeting_id = create_meeting(
+        workspace_id=workspace["id"],
+        created_by=identity["email"],
+        meeting_title=meeting_config["meeting_title"],
+        meeting_link=meeting_config["meeting_link"],
+        transcript_language=meeting_config["transcript_language"],
+        summary_mode=meeting_config["summary_mode"],
+        special_instructions=meeting_config["special_instructions"],
+        transcript_status=transcript_status,
+    )
+
+    st.session_state.meeting_id = meeting_id
+
+    return meeting_id
+
+
+def manual_transcript_input_ui():
     st.subheader("3. Transcript Input")
 
     input_mode = st.radio(
-        "Transcript input method",
+        "Manual transcript input method",
         [
             "Paste transcript manually",
             "Upload transcript file",
@@ -210,63 +255,109 @@ def transcript_input_ui():
 
     else:
         try:
-            with open(
-                "sample_transcript.txt",
-                "r",
-                encoding="utf-8",
-            ) as file:
+            with open("sample_transcript.txt", "r", encoding="utf-8") as file:
                 transcript_text = file.read()
         except FileNotFoundError:
             st.error("sample_transcript.txt not found.")
 
     if transcript_text:
-        cleaned = clean_transcript(transcript_text)
-        speakers = extract_speakers(cleaned)
-
-        st.session_state.cleaned_transcript = cleaned
-
-        st.caption(
-            f"Raw length: {len(transcript_text)} chars | "
-            f"Cleaned length: {len(cleaned)} chars"
-        )
-
-        if speakers:
-            st.caption(f"Detected speakers: {', '.join(speakers)}")
-
-        with st.expander("Preview cleaned transcript"):
-            st.text_area(
-                "Cleaned transcript",
-                value=cleaned,
-                height=250,
-            )
+        show_transcript_preview(transcript_text)
 
     return transcript_text
 
 
-def generate_summary(
-    meeting_config: dict,
-    transcript_text: str,
-):
-    identity = st.session_state.identity
-    workspace = get_workspace()
+def automatic_transcript_ui(meeting_config: dict):
+    st.subheader("3. Automatic Teams Transcript")
 
-    cleaned_transcript = clean_transcript(transcript_text)
-
-    meeting_id = create_meeting(
-        workspace_id=workspace["id"],
-        created_by=identity["email"],
-        meeting_title=meeting_config["meeting_title"],
-        meeting_link=meeting_config["meeting_link"],
-        transcript_language=meeting_config["transcript_language"],
-        summary_mode=meeting_config["summary_mode"],
-        special_instructions=meeting_config["special_instructions"],
+    st.info(
+        "This mode will try to fetch the transcript from Teams automatically. "
+        "The meeting must be finished and transcription must have been enabled."
     )
 
-    st.session_state.meeting_id = meeting_id
+    if not meeting_config["meeting_link"].strip():
+        st.warning("Please paste a Teams meeting link first.")
+        return ""
+
+    meeting_id = create_or_get_meeting_record(meeting_config)
+
+    if st.button("Check Teams transcript now"):
+        with st.spinner("Checking Teams transcript..."):
+            result = try_fetch_transcript_from_teams(
+                access_token=st.session_state.access_token,
+                meeting_link=meeting_config["meeting_link"],
+            )
+
+        st.session_state.teams_fetch_result = result
+
+        if result.get("success"):
+            transcript_content = result.get("content", "")
+
+            update_transcript_fetch_status(
+                meeting_id=meeting_id,
+                transcript_status="transcript_downloaded",
+                transcript_text=transcript_content,
+            )
+
+            st.session_state.raw_transcript = transcript_content
+
+            st.success("Transcript downloaded from Teams.")
+            show_transcript_preview(transcript_content)
+
+            return transcript_content
+
+        update_transcript_fetch_status(
+            meeting_id=meeting_id,
+            transcript_status=result.get("status", "auto_fetch_failed"),
+        )
+
+        st.warning(result.get("message", "Transcript not available yet."))
+
+        with st.expander("Technical details"):
+            st.json(result)
+
+    if st.session_state.raw_transcript:
+        show_transcript_preview(st.session_state.raw_transcript)
+        return st.session_state.raw_transcript
+
+    return ""
+
+
+def show_transcript_preview(transcript_text: str):
+    cleaned = clean_transcript(transcript_text)
+    speakers = extract_speakers(cleaned)
+
+    st.session_state.cleaned_transcript = cleaned
+    st.session_state.raw_transcript = transcript_text
+
+    st.caption(
+        f"Raw length: {len(transcript_text)} chars | "
+        f"Cleaned length: {len(cleaned)} chars"
+    )
+
+    if speakers:
+        st.caption(f"Detected speakers: {', '.join(speakers)}")
+
+    with st.expander("Preview cleaned transcript"):
+        st.text_area(
+            "Cleaned transcript",
+            value=cleaned,
+            height=250,
+        )
+
+
+def generate_summary(meeting_config: dict, transcript_text: str):
+    meeting_id = create_or_get_meeting_record(meeting_config)
+
+    cleaned_transcript = clean_transcript(transcript_text)
 
     update_meeting_transcript(
         meeting_id=meeting_id,
         transcript_text=cleaned_transcript,
+        transcript_status=(
+            "auto_downloaded"
+            if meeting_config["transcript_mode"] == "Automatic Teams transcript check"
+            else "manual_uploaded"
+        ),
     )
 
     ai_result = process_meeting_transcript(
@@ -276,6 +367,8 @@ def generate_summary(
         summary_mode=meeting_config["summary_mode"],
         special_instructions=meeting_config["special_instructions"],
     )
+
+    identity = st.session_state.identity
 
     summary_html = build_full_summary_html(
         summary_text=ai_result.get("summary", ""),
@@ -312,13 +405,7 @@ def result_review_ui():
 
     st.subheader("4. Review & Edit")
 
-    tab1, tab2, tab3 = st.tabs(
-        [
-            "Editable HTML",
-            "Structured JSON",
-            "Plain Text",
-        ]
-    )
+    tab1, tab2, tab3 = st.tabs(["Editable HTML", "Structured JSON", "Plain Text"])
 
     with tab1:
         st.session_state.editable_summary_html = st.text_area(
@@ -338,9 +425,7 @@ def result_review_ui():
         )
 
 
-def export_actions_ui(
-    meeting_config: dict,
-):
+def export_actions_ui(meeting_config: dict):
     if not st.session_state.ai_result:
         return
 
@@ -350,6 +435,13 @@ def export_actions_ui(
     identity = st.session_state.identity
     meeting_id = st.session_state.meeting_id
     edited_html = st.session_state.editable_summary_html
+
+    recipients_raw = st.text_input(
+        "Email draft recipients, comma-separated",
+        value=identity["email"],
+    )
+
+    recipients = [email.strip() for email in recipients_raw.split(",") if email.strip()]
 
     col1, col2, col3 = st.columns(3)
 
@@ -363,7 +455,6 @@ def export_actions_ui(
             )
 
             st.session_state.storage_result = storage_result
-
             st.success("Saved locally.")
             st.json(storage_result)
 
@@ -392,25 +483,12 @@ def export_actions_ui(
 
                 if result.get("onenote_url"):
                     st.markdown(f"[Open OneNote page]({result['onenote_url']})")
-
             else:
                 st.error("Failed to create OneNote page.")
                 st.json(result)
 
     with col3:
         if st.button("Create Outlook draft"):
-            ai_result = st.session_state.ai_result
-
-            recipients_raw = st.text_input(
-                "Recipients, comma-separated",
-                value=identity["email"],
-                key="draft_recipients_input",
-            )
-
-            recipients = [
-                email.strip() for email in recipients_raw.split(",") if email.strip()
-            ]
-
             result = create_followup_email_draft(
                 access_token=access_token,
                 meeting_title=meeting_config["meeting_title"],
@@ -433,7 +511,6 @@ def export_actions_ui(
 
                 if result.get("web_link"):
                     st.markdown(f"[Open Outlook draft]({result['web_link']})")
-
             else:
                 st.error("Failed to create Outlook draft.")
                 st.json(result)
@@ -454,14 +531,17 @@ def sidebar_ui():
     if st.session_state.authenticated:
         st.sidebar.success(f"Connected: {st.session_state.identity['email']}")
 
+    if st.sidebar.button("Reset current session"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
     st.sidebar.divider()
 
     st.sidebar.subheader("Recent Meetings")
 
     try:
-        recent_meetings = list_recent_meetings(
-            limit=10,
-        )
+        recent_meetings = list_recent_meetings(limit=10)
 
         if not recent_meetings:
             st.sidebar.caption("No meetings yet.")
@@ -470,7 +550,8 @@ def sidebar_ui():
             st.sidebar.caption(
                 f"#{meeting['id']} | "
                 f"{meeting['meeting_title']} | "
-                f"{meeting['status']}"
+                f"{meeting['status']} | "
+                f"{meeting.get('transcript_status')}"
             )
 
     except Exception:
@@ -488,7 +569,7 @@ def main():
     sidebar_ui()
 
     st.title("AI Meeting Minutes Agent")
-    st.caption("Manual Teams transcript → AI minutes → OneNote page → Outlook draft")
+    st.caption("Teams transcript → AI minutes → OneNote page → Outlook draft")
 
     microsoft_ready = microsoft_login_ui()
 
@@ -497,20 +578,22 @@ def main():
 
     meeting_config = meeting_setup_ui()
 
-    transcript_text = transcript_input_ui()
+    if meeting_config["transcript_mode"] == "Manual transcript input":
+        transcript_text = manual_transcript_input_ui()
+    else:
+        transcript_text = automatic_transcript_ui(meeting_config)
 
     st.divider()
 
-    if st.button(
-        "Generate AI Meeting Minutes",
-        type="primary",
-    ):
+    if st.button("Generate AI Meeting Minutes", type="primary"):
         if not meeting_config["meeting_title"].strip():
             st.error("Meeting title is required.")
             return
 
         if not transcript_text.strip():
-            st.error("Transcript is required.")
+            st.error(
+                "Transcript is required. Paste/upload it manually or fetch it from Teams."
+            )
             return
 
         with st.spinner("Processing transcript with AI..."):
@@ -527,10 +610,7 @@ def main():
         st.success("AI meeting minutes generated.")
 
     result_review_ui()
-
-    export_actions_ui(
-        meeting_config=meeting_config,
-    )
+    export_actions_ui(meeting_config=meeting_config)
 
 
 if __name__ == "__main__":
