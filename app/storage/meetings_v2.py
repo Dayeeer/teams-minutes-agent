@@ -99,3 +99,95 @@ def count_meetings() -> int:
     conn.close()
 
     return result
+
+
+def list_meetings_by_status(status: str, limit: int = 20) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meetings_v2
+        WHERE status = ?
+        ORDER BY start_time DESC
+        LIMIT ?
+        """,
+        (status, limit),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def update_online_meeting_result(
+    calendar_event_id: str,
+    online_meeting_id: str,
+    status: str = "online_meeting_found",
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            online_meeting_id = ?,
+            status = ?,
+            last_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (online_meeting_id, status, calendar_event_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_transcript_result(
+    calendar_event_id: str,
+    transcript_id: str,
+    status: str = "transcript_found",
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            transcript_id = ?,
+            transcript_available = 1,
+            status = ?,
+            last_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (transcript_id, status, calendar_event_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_meeting_error(
+    calendar_event_id: str,
+    status: str,
+    error_message: str,
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            status = ?,
+            last_error = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (status, error_message, calendar_event_id),
+    )
+
+    conn.commit()
+    conn.close()
