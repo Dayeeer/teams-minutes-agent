@@ -20,11 +20,14 @@ __pycache__/
 # Logs
 *.log
 
-# Generated outputs and local storage
-outputs/
-storage/
-
-# Local database
-data/
-meetings.db
+# Runtime databases
+data/*.db
 *.db
+
+# Runtime generated files
+outputs/
+
+# Legacy generated content only
+storage/html/
+storage/json/
+storage/text/
