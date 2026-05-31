@@ -355,6 +355,10 @@ def list_meetings_ready_for_onenote(limit: int = 10) -> list[dict]:
         SELECT *
         FROM meetings_v2
         WHERE status = 'summary_generated'
+        AND (
+            onenote_page_id IS NULL
+            OR onenote_page_id = ''
+        )
         ORDER BY start_time DESC
         LIMIT ?
         """,
@@ -364,7 +368,6 @@ def list_meetings_ready_for_onenote(limit: int = 10) -> list[dict]:
     conn.close()
 
     return [dict(row) for row in rows]
-
 
 def update_onenote_result(
     calendar_event_id: str,
