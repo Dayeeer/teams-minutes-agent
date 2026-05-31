@@ -191,3 +191,62 @@ def update_meeting_error(
 
     conn.commit()
     conn.close()
+
+def ensure_transcript_text_column():
+    conn = get_connection()
+
+    existing_columns = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(meetings_v2)").fetchall()
+    ]
+
+    if "transcript_text" not in existing_columns:
+        conn.execute("ALTER TABLE meetings_v2 ADD COLUMN transcript_text TEXT")
+
+    conn.commit()
+    conn.close()
+
+
+def list_meetings_with_transcript_found(limit: int = 10) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meetings_v2
+        WHERE status = 'transcript_found'
+        AND transcript_id IS NOT NULL
+        ORDER BY start_time DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def update_transcript_text(
+    calendar_event_id: str,
+    transcript_text: str,
+    status: str = "transcript_downloaded",
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            transcript_text = ?,
+            status = ?,
+            last_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (transcript_text, status, calendar_event_id),
+    )
+
+    conn.commit()
+    conn.close()
