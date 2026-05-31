@@ -1,13 +1,18 @@
-from app.meetings.calendar_watcher import discover_recent_teams_meetings
+from app.meetings.calendar_watcher import discover_teams_meetings_in_window
 from app.storage.meetings_v2 import initialize_database, upsert_meeting, count_meetings
 
 
-def run_calendar_watcher(access_token: str, limit: int = 20) -> dict:
+def run_calendar_watcher(
+    access_token: str,
+    days_back: int = 1,
+    days_forward: int = 30,
+) -> dict:
     initialize_database()
 
-    meetings = discover_recent_teams_meetings(
+    meetings = discover_teams_meetings_in_window(
         access_token=access_token,
-        limit=limit,
+        days_back=days_back,
+        days_forward=days_forward,
     )
 
     saved_count = 0

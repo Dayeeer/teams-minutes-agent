@@ -22,7 +22,8 @@ access_token = auth_result["access_token"]
 
 result = run_calendar_watcher(
     access_token=access_token,
-    limit=20,
+    days_back=10,
+    days_forward=30,
 )
 
 print("\nCALENDAR WATCHER RESULT:")
