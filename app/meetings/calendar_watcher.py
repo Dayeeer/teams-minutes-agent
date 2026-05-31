@@ -8,7 +8,11 @@ def iso_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def build_calendar_view_endpoint(days_back: int = 1, days_forward: int = 30) -> str:
+def build_calendar_view_endpoint(
+    days_back: int = 1,
+    days_forward: int = 30,
+    user_id: str | None = None,
+) -> str:
     now = datetime.now(timezone.utc)
 
     start = iso_utc(now - timedelta(days=days_back))
@@ -17,8 +21,10 @@ def build_calendar_view_endpoint(days_back: int = 1, days_forward: int = 30) -> 
     start_encoded = quote(start, safe="")
     end_encoded = quote(end, safe="")
 
+    user_prefix = "/me" if user_id is None else f"/users/{quote(user_id, safe='')}"
+
     return (
-        "/me/calendarView"
+        f"{user_prefix}/calendarView"
         f"?startDateTime={start_encoded}"
         f"&endDateTime={end_encoded}"
         "&$top=100"
@@ -27,15 +33,17 @@ def build_calendar_view_endpoint(days_back: int = 1, days_forward: int = 30) -> 
         "onlineMeetingProvider,onlineMeetingUrl,onlineMeeting,webLink"
     )
 
-
 def list_calendar_events_in_window(
     access_token: str,
     days_back: int = 1,
     days_forward: int = 30,
+    user_id: str | None = None,
 ) -> list[dict]:
+
     endpoint = build_calendar_view_endpoint(
         days_back=days_back,
         days_forward=days_forward,
+        user_id=user_id,
     )
 
     result = graph_get(
@@ -47,7 +55,6 @@ def list_calendar_events_in_window(
         raise RuntimeError(result)
 
     return result.get("data", {}).get("value", [])
-
 
 def get_event_join_url(event: dict) -> str | None:
     if event.get("onlineMeetingUrl"):
@@ -91,11 +98,13 @@ def discover_teams_meetings_in_window(
     access_token: str,
     days_back: int = 1,
     days_forward: int = 30,
+    user_id: str | None = None,
 ) -> list[dict]:
     events = list_calendar_events_in_window(
         access_token=access_token,
         days_back=days_back,
         days_forward=days_forward,
+        user_id=user_id,
     )
 
     meetings = []

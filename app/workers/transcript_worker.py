@@ -10,11 +10,29 @@ from app.storage.meetings_v2 import (
 )
 
 
-def find_online_meeting_by_join_url(access_token: str, join_url: str) -> dict | None:
-    encoded_url = quote(join_url, safe="")
-    endpoint = f"/me/onlineMeetings?$filter=JoinWebUrl eq '{encoded_url}'"
+def build_online_meetings_prefix(user_id: str | None = None) -> str:
+    if user_id:
+        return f"/users/{quote(user_id, safe='')}/onlineMeetings"
 
-    result = graph_get(access_token=access_token, endpoint=endpoint)
+    return "/me/onlineMeetings"
+
+
+def find_online_meeting_by_join_url(
+    access_token: str,
+    join_url: str,
+    user_id: str | None = None,
+) -> dict | None:
+    encoded_url = quote(join_url, safe="")
+
+    endpoint = (
+        f"{build_online_meetings_prefix(user_id)}"
+        f"?$filter=JoinWebUrl eq '{encoded_url}'"
+    )
+
+    result = graph_get(
+        access_token=access_token,
+        endpoint=endpoint,
+    )
 
     if not result.get("success"):
         raise RuntimeError(result)
@@ -27,10 +45,20 @@ def find_online_meeting_by_join_url(access_token: str, join_url: str) -> dict | 
     return meetings[0]
 
 
-def list_transcripts(access_token: str, online_meeting_id: str) -> list[dict]:
-    endpoint = f"/me/onlineMeetings/{online_meeting_id}/transcripts"
+def list_transcripts(
+    access_token: str,
+    online_meeting_id: str,
+    user_id: str | None = None,
+) -> list[dict]:
+    endpoint = (
+        f"{build_online_meetings_prefix(user_id)}"
+        f"/{online_meeting_id}/transcripts"
+    )
 
-    result = graph_get(access_token=access_token, endpoint=endpoint)
+    result = graph_get(
+        access_token=access_token,
+        endpoint=endpoint,
+    )
 
     if not result.get("success"):
         raise RuntimeError(result)
@@ -38,7 +66,11 @@ def list_transcripts(access_token: str, online_meeting_id: str) -> list[dict]:
     return result.get("data", {}).get("value", [])
 
 
-def process_calendar_detected_meetings(access_token: str, limit: int = 10) -> dict:
+def process_calendar_detected_meetings(
+    access_token: str,
+    limit: int = 50,
+    user_id: str | None = None,
+) -> dict:
     meetings = list_meetings_by_status(
         status="calendar_detected",
         limit=limit,
@@ -68,6 +100,7 @@ def process_calendar_detected_meetings(access_token: str, limit: int = 10) -> di
             online_meeting = find_online_meeting_by_join_url(
                 access_token=access_token,
                 join_url=join_url,
+                user_id=user_id,
             )
 
             if not online_meeting:
@@ -81,6 +114,15 @@ def process_calendar_detected_meetings(access_token: str, limit: int = 10) -> di
 
             online_meeting_id = online_meeting.get("id")
 
+            if not online_meeting_id:
+                update_meeting_error(
+                    calendar_event_id=calendar_event_id,
+                    status="online_meeting_id_missing",
+                    error_message="Online meeting found but has no ID.",
+                )
+                errors += 1
+                continue
+
             update_online_meeting_result(
                 calendar_event_id=calendar_event_id,
                 online_meeting_id=online_meeting_id,
@@ -92,19 +134,28 @@ def process_calendar_detected_meetings(access_token: str, limit: int = 10) -> di
             transcripts = list_transcripts(
                 access_token=access_token,
                 online_meeting_id=online_meeting_id,
+                user_id=user_id,
             )
 
             if not transcripts:
-                update_meeting_error(
+                update_online_meeting_result(
                     calendar_event_id=calendar_event_id,
+                    online_meeting_id=online_meeting_id,
                     status="transcript_not_available",
-                    error_message="No transcript available for this meeting.",
                 )
-                errors += 1
                 continue
 
             transcript = transcripts[0]
             transcript_id = transcript.get("id")
+
+            if not transcript_id:
+                update_meeting_error(
+                    calendar_event_id=calendar_event_id,
+                    status="transcript_id_missing",
+                    error_message="Transcript found but has no ID.",
+                )
+                errors += 1
+                continue
 
             update_transcript_result(
                 calendar_event_id=calendar_event_id,

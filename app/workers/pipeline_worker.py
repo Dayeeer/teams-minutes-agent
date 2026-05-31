@@ -9,23 +9,27 @@ def run_pipeline(
     access_token: str,
     days_back: int = 1,
     days_forward: int = 30,
-):
+    user_id: str | None = None,
+) -> dict:
     result = {}
 
     result["calendar"] = run_calendar_watcher(
         access_token=access_token,
         days_back=days_back,
         days_forward=days_forward,
+        user_id=user_id,
     )
 
     result["transcripts"] = process_calendar_detected_meetings(
         access_token=access_token,
         limit=50,
+        user_id=user_id,
     )
 
     result["downloads"] = process_transcript_downloads(
         access_token=access_token,
         limit=50,
+        user_id=user_id,
     )
 
     result["summaries"] = process_summaries(
