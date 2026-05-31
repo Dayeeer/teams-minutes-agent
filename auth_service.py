@@ -9,8 +9,10 @@ SCOPES = [
     "Notes.ReadWrite",
     "Mail.ReadWrite",
     "Mail.Send",
+    "Calendars.Read",
+    "OnlineMeetings.Read",
+    "OnlineMeetingTranscript.Read.All",
 ]
-
 
 GRAPH_ME_ENDPOINT = "https://graph.microsoft.com/v1.0/me"
 
