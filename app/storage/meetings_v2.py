@@ -71,7 +71,6 @@ def upsert_meeting(meeting: dict):
             start_time=excluded.start_time,
             end_time=excluded.end_time,
             join_url=excluded.join_url,
-            status=excluded.status,
             updated_at=CURRENT_TIMESTAMP
         """,
         (
