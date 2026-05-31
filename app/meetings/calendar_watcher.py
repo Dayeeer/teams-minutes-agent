@@ -1,16 +1,47 @@
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
+
 from microsoft_graph import graph_get
 
 
-def list_recent_calendar_events(access_token: str, limit: int = 20) -> list[dict]:
-    endpoint = (
-        f"/me/events"
-        f"?$top={limit}"
-        "&$orderby=start/dateTime desc"
+def iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def build_calendar_view_endpoint(days_back: int = 1, days_forward: int = 30) -> str:
+    now = datetime.now(timezone.utc)
+
+    start = iso_utc(now - timedelta(days=days_back))
+    end = iso_utc(now + timedelta(days=days_forward))
+
+    start_encoded = quote(start, safe="")
+    end_encoded = quote(end, safe="")
+
+    return (
+        "/me/calendarView"
+        f"?startDateTime={start_encoded}"
+        f"&endDateTime={end_encoded}"
+        "&$top=100"
+        "&$orderby=start/dateTime"
         "&$select=id,subject,start,end,organizer,isOnlineMeeting,"
         "onlineMeetingProvider,onlineMeetingUrl,onlineMeeting,webLink"
     )
 
-    result = graph_get(access_token=access_token, endpoint=endpoint)
+
+def list_calendar_events_in_window(
+    access_token: str,
+    days_back: int = 1,
+    days_forward: int = 30,
+) -> list[dict]:
+    endpoint = build_calendar_view_endpoint(
+        days_back=days_back,
+        days_forward=days_forward,
+    )
+
+    result = graph_get(
+        access_token=access_token,
+        endpoint=endpoint,
+    )
 
     if not result.get("success"):
         raise RuntimeError(result)
@@ -56,8 +87,16 @@ def extract_calendar_meeting(event: dict) -> dict:
     }
 
 
-def discover_recent_teams_meetings(access_token: str, limit: int = 20) -> list[dict]:
-    events = list_recent_calendar_events(access_token, limit=limit)
+def discover_teams_meetings_in_window(
+    access_token: str,
+    days_back: int = 1,
+    days_forward: int = 30,
+) -> list[dict]:
+    events = list_calendar_events_in_window(
+        access_token=access_token,
+        days_back=days_back,
+        days_forward=days_forward,
+    )
 
     meetings = []
 
@@ -68,3 +107,14 @@ def discover_recent_teams_meetings(access_token: str, limit: int = 20) -> list[d
         meetings.append(extract_calendar_meeting(event))
 
     return meetings
+
+
+def discover_recent_teams_meetings(access_token: str, limit: int = 20) -> list[dict]:
+    # Backward-compatible wrapper for old tests.
+    meetings = discover_teams_meetings_in_window(
+        access_token=access_token,
+        days_back=1,
+        days_forward=30,
+    )
+
+    return meetings[:limit]
