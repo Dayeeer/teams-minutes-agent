@@ -250,3 +250,74 @@ def update_transcript_text(
 
     conn.commit()
     conn.close()
+
+def ensure_summary_columns():
+    conn = get_connection()
+
+    existing_columns = [
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(meetings_v2)"
+        ).fetchall()
+    ]
+
+    if "summary_text" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE meetings_v2 ADD COLUMN summary_text TEXT"
+        )
+
+    if "summary_json" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE meetings_v2 ADD COLUMN summary_json TEXT"
+        )
+
+    conn.commit()
+    conn.close()
+
+def list_meetings_ready_for_summary(
+    limit: int = 10,
+) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meetings_v2
+        WHERE status = 'transcript_downloaded'
+        ORDER BY start_time DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+def update_summary_result(
+    calendar_event_id: str,
+    summary_text: str,
+    summary_json: str,
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            summary_text = ?,
+            summary_json = ?,
+            status = 'summary_generated',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (
+            summary_text,
+            summary_json,
+            calendar_event_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
