@@ -54,6 +54,8 @@ def process_onenote_pages(
                 transcript_language="English",
                 summary_mode="Standard Minutes",
                 meeting_link=meeting.get("join_url"),
+                start_time=meeting.get("start_time"),
+                end_time=meeting.get("end_time"),
             )
 
             if not result.get("success"):
