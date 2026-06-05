@@ -3,7 +3,7 @@ from urllib.parse import quote
 from microsoft_graph import graph_get
 
 from app.storage.meetings_v2 import (
-    list_meetings_by_status,
+    list_meetings_for_transcript_processing,
     update_online_meeting_result,
     update_transcript_result,
     update_meeting_error,
@@ -71,8 +71,7 @@ def process_calendar_detected_meetings(
     limit: int = 50,
     user_id: str | None = None,
 ) -> dict:
-    meetings = list_meetings_by_status(
-        status="calendar_detected",
+    meetings = list_meetings_for_transcript_processing(
         limit=limit,
     )
 
@@ -141,7 +140,7 @@ def process_calendar_detected_meetings(
                 update_online_meeting_result(
                     calendar_event_id=calendar_event_id,
                     online_meeting_id=online_meeting_id,
-                    status="transcript_not_available",
+                    status="calendar_detected",
                 )
                 continue
 

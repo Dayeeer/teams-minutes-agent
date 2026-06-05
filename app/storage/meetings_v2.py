@@ -119,6 +119,32 @@ def list_meetings_by_status(status: str, limit: int = 20) -> list[dict]:
 
     return [dict(row) for row in rows]
 
+def list_meetings_for_transcript_processing(
+    limit: int = 50,
+) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meetings_v2
+        WHERE status IN (
+            'calendar_detected',
+            'online_meeting_found',
+            'waiting_for_transcript',
+            'transcript_not_available',
+            'transcript_worker_error'
+        )
+        ORDER BY start_time DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
 
 def update_online_meeting_result(
     calendar_event_id: str,
