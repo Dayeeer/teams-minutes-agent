@@ -395,3 +395,80 @@ def update_onenote_result(
 
     conn.commit()
     conn.close()
+
+def ensure_outlook_columns():
+    conn = get_connection()
+
+    existing_columns = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(meetings_v2)").fetchall()
+    ]
+
+    if "outlook_draft_id" not in existing_columns:
+        conn.execute("ALTER TABLE meetings_v2 ADD COLUMN outlook_draft_id TEXT")
+
+    if "outlook_draft_subject" not in existing_columns:
+        conn.execute("ALTER TABLE meetings_v2 ADD COLUMN outlook_draft_subject TEXT")
+
+    if "outlook_draft_url" not in existing_columns:
+        conn.execute("ALTER TABLE meetings_v2 ADD COLUMN outlook_draft_url TEXT")
+
+    conn.commit()
+    conn.close()
+
+
+def list_meetings_ready_for_email_draft(limit: int = 10) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meetings_v2
+        WHERE status = 'onenote_created'
+        AND summary_json IS NOT NULL
+        AND (
+            outlook_draft_id IS NULL
+            OR outlook_draft_id = ''
+        )
+        ORDER BY start_time DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def update_outlook_draft_result(
+    calendar_event_id: str,
+    draft_id: str,
+    draft_subject: str,
+    draft_url: str,
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE meetings_v2
+        SET
+            outlook_draft_id = ?,
+            outlook_draft_subject = ?,
+            outlook_draft_url = ?,
+            status = 'email_draft_created',
+            last_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE calendar_event_id = ?
+        """,
+        (
+            draft_id,
+            draft_subject,
+            draft_url,
+            calendar_event_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()

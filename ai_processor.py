@@ -63,6 +63,22 @@ MEETING_OUTPUT_SCHEMA = {
             "type": "string",
             "description": "Suggested plain-text email body if email_required is true.",
         },
+
+        "email_recommended_recipients": {
+    	    "type": "array",
+    	    "description": "Names of people who should probably receive the email. Do not invent email addresses.",
+    	    "items": {
+        	"type": "string",
+    	    },
+	},
+	"email_recommended_attachments": {
+    	    "type": "array",
+    	    "description": "Files or documents that should probably be attached manually by the user.",
+    	    "items": {
+        	"type": "string",
+    	    },
+	},
+
     },
     "required": [
         "summary",
@@ -74,6 +90,8 @@ MEETING_OUTPUT_SCHEMA = {
         "email_required",
         "email_subject",
         "email_body",
+	"email_recommended_recipients",
+	"email_recommended_attachments",
     ],
 }
 
@@ -92,6 +110,9 @@ You must follow these rules:
 - Keep the output concise, professional, and useful.
 - If no email is needed, set email_required to false and leave email_subject and email_body empty.
 - Always return valid JSON according to the provided schema.
+- For email drafts, recommend recipient names only when clearly mentioned or strongly implied.
+- Do not invent email addresses.
+- If attachments are useful, describe which files or documents the user should attach manually.
 """
 
 

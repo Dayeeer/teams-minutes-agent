@@ -3,7 +3,7 @@ from app.workers.transcript_worker import process_calendar_detected_meetings
 from app.workers.transcript_download_worker import process_transcript_downloads
 from app.workers.summary_worker import process_summaries
 from app.workers.onenote_worker import process_onenote_pages
-
+from app.workers.email_draft_worker import process_email_drafts
 
 def run_pipeline(
     access_token: str,
@@ -37,6 +37,11 @@ def run_pipeline(
     )
 
     result["onenote"] = process_onenote_pages(
+        access_token=access_token,
+        limit=50,
+    )
+
+    result["email_drafts"] = process_email_drafts(
         access_token=access_token,
         limit=50,
     )
