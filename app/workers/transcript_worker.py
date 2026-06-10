@@ -1,3 +1,4 @@
+import json
 from urllib.parse import quote
 
 from microsoft_graph import graph_get
@@ -144,10 +145,18 @@ def process_calendar_detected_meetings(
                 )
                 continue
 
-            transcript = transcripts[0]
-            transcript_id = transcript.get("id")
+            transcripts_sorted = sorted(
+                transcripts,
+                key=lambda item: item.get("createdDateTime") or "",
+            )
 
-            if not transcript_id:
+            transcript_ids = [
+                transcript.get("id")
+                for transcript in transcripts_sorted
+                if transcript.get("id")
+            ]
+
+            if not transcript_ids:
                 update_meeting_error(
                     calendar_event_id=calendar_event_id,
                     status="transcript_id_missing",
@@ -158,7 +167,8 @@ def process_calendar_detected_meetings(
 
             update_transcript_result(
                 calendar_event_id=calendar_event_id,
-                transcript_id=transcript_id,
+                transcript_id=transcript_ids[0],
+                transcript_ids_json=json.dumps(transcript_ids),
                 status="transcript_found",
             )
 

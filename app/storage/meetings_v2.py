@@ -174,6 +174,7 @@ def update_transcript_result(
     calendar_event_id: str,
     transcript_id: str,
     status: str = "transcript_found",
+    transcript_ids_json: str | None = None,
 ):
     conn = get_connection()
 
@@ -182,18 +183,23 @@ def update_transcript_result(
         UPDATE meetings_v2
         SET
             transcript_id = ?,
+            transcript_ids_json = ?,
             transcript_available = 1,
             status = ?,
             last_error = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE calendar_event_id = ?
         """,
-        (transcript_id, status, calendar_event_id),
+        (
+            transcript_id,
+            transcript_ids_json,
+            status,
+            calendar_event_id,
+        ),
     )
 
     conn.commit()
     conn.close()
-
 
 def update_meeting_error(
     calendar_event_id: str,
@@ -495,6 +501,130 @@ def update_outlook_draft_result(
             calendar_event_id,
         ),
     )
+
+    conn.commit()
+    conn.close()
+
+def ensure_meeting_context_table():
+    conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meeting_context_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            calendar_event_id TEXT,
+
+            source_type TEXT,
+            source_id TEXT,
+
+            source_title TEXT,
+            source_sender TEXT,
+            source_date TEXT,
+
+            relevance_method TEXT,
+            relevance_score REAL,
+
+            content_text TEXT,
+
+            used_in_summary INTEGER DEFAULT 0,
+
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(calendar_event_id, source_type, source_id)
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def upsert_meeting_context_source(
+    calendar_event_id: str,
+    source_type: str,
+    source_id: str,
+    source_title: str,
+    source_sender: str | None,
+    source_date: str | None,
+    relevance_method: str,
+    relevance_score: float,
+    content_text: str,
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        INSERT INTO meeting_context_sources (
+            calendar_event_id,
+            source_type,
+            source_id,
+            source_title,
+            source_sender,
+            source_date,
+            relevance_method,
+            relevance_score,
+            content_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+        ON CONFLICT(calendar_event_id, source_type, source_id)
+        DO UPDATE SET
+            source_title = excluded.source_title,
+            source_sender = excluded.source_sender,
+            source_date = excluded.source_date,
+            relevance_method = excluded.relevance_method,
+            relevance_score = excluded.relevance_score,
+            content_text = excluded.content_text
+        """,
+        (
+            calendar_event_id,
+            source_type,
+            source_id,
+            source_title,
+            source_sender,
+            source_date,
+            relevance_method,
+            relevance_score,
+            content_text,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def list_meeting_context_sources(
+    calendar_event_id: str,
+) -> list[dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM meeting_context_sources
+        WHERE calendar_event_id = ?
+        ORDER BY relevance_score DESC, source_date DESC
+        """,
+        (calendar_event_id,),
+    ).fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def ensure_transcript_ids_json_column():
+    conn = get_connection()
+
+    existing_columns = [
+        row[1]
+        for row in conn.execute("PRAGMA table_info(meetings_v2)").fetchall()
+    ]
+
+    if "transcript_ids_json" not in existing_columns:
+        conn.execute("ALTER TABLE meetings_v2 ADD COLUMN transcript_ids_json TEXT")
 
     conn.commit()
     conn.close()
